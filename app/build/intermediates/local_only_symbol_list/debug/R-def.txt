@@ -1,0 +1,6 @@
+R_DEF: Internal format may change without notice
+local
+id btnExit
+id btnTest
+id tvResult
+layout activity_main
