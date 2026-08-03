@@ -1,8 +1,10 @@
 package com.example.pingtest
 
 import android.os.Bundle
+import android.util.Log
 import android.widget.Button
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import java.net.HttpURLConnection
@@ -22,11 +24,12 @@ class MainActivity : AppCompatActivity() {
         btnExit = findViewById(R.id.btnExit)
 
         btnTest.setOnClickListener {
-            tvResult.text = "Проверка..."
+            tvResult.text = "Проверка... (подождите 10 сек)"
             btnTest.isEnabled = false
             Thread {
                 val isGoogleUp = checkUrl("https://www.google.com/generate_204")
                 val isVkUp = checkUrl("https://vk.com")
+                Log.d("PingTest", "Google: $isGoogleUp, VK: $isVkUp")
                 runOnUiThread {
                     btnTest.isEnabled = true
                     when {
@@ -54,12 +57,16 @@ class MainActivity : AppCompatActivity() {
         return try {
             val url = URL(urlString)
             val connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = 4000
-            connection.readTimeout = 4000
-            connection.requestMethod = "HEAD"
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+            connection.requestMethod = "GET"
+            connection.instanceFollowRedirects = true
             val code = connection.responseCode
             connection.disconnect()
             code in 200..399
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            Log.e("PingTest", "Error checking $urlString: ${e.message}")
+            false
+        }
     }
 }
