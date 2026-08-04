@@ -7,6 +7,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import java.net.HttpURLConnection
+import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.concurrent.Executors
@@ -37,16 +38,16 @@ class MainActivity : AppCompatActivity() {
             val executor = Executors.newFixedThreadPool(2)
             
             val googleFuture = executor.submit { 
-                checkUrl("https://www.google.com/generate_204", 5000) 
+                checkConnectivity("google.com", "https://www.google.com/generate_204", 10000) 
             }
             val vkFuture = executor.submit { 
-                checkUrl("https://vk.com", 5000) 
+                checkConnectivity("vk.com", "https://vk.com", 10000) 
             }
             
             Thread {
                 try {
-                    val isGoogleUp: Boolean = googleFuture.get(8, TimeUnit.SECONDS) as Boolean
-                    val isVkUp: Boolean = vkFuture.get(8, TimeUnit.SECONDS) as Boolean
+                    val isGoogleUp: Boolean = googleFuture.get(15, TimeUnit.SECONDS) as Boolean
+                    val isVkUp: Boolean = vkFuture.get(15, TimeUnit.SECONDS) as Boolean
                     
                     Log.d("PingTest", "Google: $isGoogleUp, VK: $isVkUp")
                     
@@ -97,9 +98,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun checkUrl(urlString: String, timeout: Int): Boolean {
+    private fun checkConnectivity(host: String, urlString: String, timeout: Int): Boolean {
+        // Сначала пробуем HTTP-запрос
         var connection: HttpURLConnection? = null
-        return try {
+        try {
             val url = URL(urlString)
             connection = url.openConnection() as HttpURLConnection
             connection.connectTimeout = timeout
@@ -112,15 +114,22 @@ class MainActivity : AppCompatActivity() {
             connection.disconnect()
             
             Log.d("PingTest", "$urlString returned $code")
-            code in 200..399
+            return code in 200..399
         } catch (e: SocketTimeoutException) {
-            Log.e("PingTest", "Timeout for $urlString")
-            false
+            Log.e("PingTest", "HTTP timeout for $urlString")
         } catch (e: Exception) {
-            Log.e("PingTest", "Error checking $urlString: ${e.message}")
-            false
+            Log.e("PingTest", "HTTP error for $urlString: ${e.message}")
         } finally {
             connection?.disconnect()
+        }
+        
+        // Если HTTP не сработал, пробуем DNS + ping
+        return try {
+            val inetAddress = InetAddress.getByName(host)
+            inetAddress.isReachable(5000)
+        } catch (e: Exception) {
+            Log.e("PingTest", "Ping error for $host: ${e.message}")
+            false
         }
     }
 }
