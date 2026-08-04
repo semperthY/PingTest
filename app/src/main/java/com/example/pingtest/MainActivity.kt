@@ -8,7 +8,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import java.net.HttpURLConnection
 import java.net.InetAddress
-import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -18,6 +17,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var btnTest: Button
     private lateinit var btnExit: Button
+
+    // Списки сайтов для проверки
+    private val foreignSites = listOf(
+        "https://www.google.com/generate_204",
+        "https://www.youtube.com",
+        "https://www.facebook.com"
+    )
+    
+    private val russianSites = listOf(
+        "https://vk.com",
+        "https://yandex.ru",
+        "https://mail.ru"
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -35,59 +47,50 @@ class MainActivity : AppCompatActivity() {
             btnTest.isEnabled = false
             btnTest.alpha = 0.6f
 
-            val executor = Executors.newFixedThreadPool(2)
-            
-            val googleFuture = executor.submit { 
-                checkConnectivity("google.com", "https://www.google.com/generate_204", 10000) 
-            }
-            val vkFuture = executor.submit { 
-                checkConnectivity("vk.com", "https://vk.com", 10000) 
-            }
-            
             Thread {
                 try {
-                    val isGoogleUp: Boolean = googleFuture.get(15, TimeUnit.SECONDS) as Boolean
-                    val isVkUp: Boolean = vkFuture.get(15, TimeUnit.SECONDS) as Boolean
+                    // Проверяем зарубежные сайты
+                    val foreignAccessible = checkMultipleSites(foreignSites)
+                    // Проверяем российские сайты
+                    val russianAccessible = checkMultipleSites(russianSites)
                     
-                    Log.d("PingTest", "Google: $isGoogleUp, VK: $isVkUp")
+                    Log.d("PingTest", "Foreign: $foreignAccessible, Russian: $russianAccessible")
                     
                     runOnUiThread {
                         btnTest.isEnabled = true
                         btnTest.alpha = 1f
-                        executor.shutdown()
                         
                         when {
-                            isGoogleUp && isVkUp -> {
+                            foreignAccessible && russianAccessible -> {
                                 tvResult.text = "Белые списки выкл."
                                 tvResult.setTextColor(ContextCompat.getColor(this, R.color.success))
                                 tvStatus.text = "Все сайты доступны"
                             }
-                            !isGoogleUp && isVkUp -> {
+                            !foreignAccessible && russianAccessible -> {
                                 tvResult.text = "Белые списки вкл."
                                 tvResult.setTextColor(ContextCompat.getColor(this, R.color.error))
-                                tvStatus.text = "Google заблокирован"
+                                tvStatus.text = "Зарубежные сайты заблокированы"
                             }
-                            isGoogleUp && !isVkUp -> {
+                            foreignAccessible && !russianAccessible -> {
                                 tvResult.text = "Необычная ситуация"
                                 tvResult.setTextColor(ContextCompat.getColor(this, R.color.warning))
-                                tvStatus.text = "VK недоступен, Google работает"
+                                tvStatus.text = "Российские сайты недоступны"
                             }
                             else -> {
                                 tvResult.text = "Нет интернета"
                                 tvResult.setTextColor(ContextCompat.getColor(this, R.color.warning))
-                                tvStatus.text = "Оба сайта недоступны"
+                                tvStatus.text = "Все сайты недоступны"
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e("PingTest", "Timeout or error: ${e.message}")
+                    Log.e("PingTest", "Error: ${e.message}")
                     runOnUiThread {
                         btnTest.isEnabled = true
                         btnTest.alpha = 1f
-                        executor.shutdown()
                         tvResult.text = "Ошибка проверки"
                         tvResult.setTextColor(ContextCompat.getColor(this, R.color.warning))
-                        tvStatus.text = "Превышено время ожидания"
+                        tvStatus.text = "Попробуйте еще раз"
                     }
                 }
             }.start()
@@ -98,38 +101,49 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun checkConnectivity(host: String, urlString: String, timeout: Int): Boolean {
-        // Сначала пробуем HTTP-запрос
+    private fun checkMultipleSites(sites: List<String>): Boolean {
+        val executor = Executors.newFixedThreadPool(3)
+        val futures = sites.map { site ->
+            executor.submit {
+                checkSite(site)
+            }
+        }
+        
+        var successCount = 0
+        for (future in futures) {
+            try {
+                val result = future.get(8, TimeUnit.SECONDS) as Boolean
+                if (result) successCount++
+            } catch (e: Exception) {
+                Log.e("PingTest", "Site check failed: ${e.message}")
+            }
+        }
+        executor.shutdown()
+        
+        // Если хотя бы 2 из 3 сайтов доступны - считаем что категория работает
+        return successCount >= 2
+    }
+
+    private fun checkSite(urlString: String): Boolean {
         var connection: HttpURLConnection? = null
-        try {
+        return try {
             val url = URL(urlString)
             connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = timeout
-            connection.readTimeout = timeout
+            connection.connectTimeout = 6000
+            connection.readTimeout = 6000
             connection.requestMethod = "HEAD"
             connection.instanceFollowRedirects = true
-            connection.useCaches = false
             
             val code = connection.responseCode
             connection.disconnect()
             
-            Log.d("PingTest", "$urlString returned $code")
-            return code in 200..399
-        } catch (e: SocketTimeoutException) {
-            Log.e("PingTest", "HTTP timeout for $urlString")
+            Log.d("PingTest", "$urlString -> $code")
+            code in 200..399
         } catch (e: Exception) {
-            Log.e("PingTest", "HTTP error for $urlString: ${e.message}")
+            Log.e("PingTest", "Failed $urlString: ${e.message}")
+            false
         } finally {
             connection?.disconnect()
-        }
-        
-        // Если HTTP не сработал, пробуем DNS + ping
-        return try {
-            val inetAddress = InetAddress.getByName(host)
-            inetAddress.isReachable(5000)
-        } catch (e: Exception) {
-            Log.e("PingTest", "Ping error for $host: ${e.message}")
-            false
         }
     }
 }
