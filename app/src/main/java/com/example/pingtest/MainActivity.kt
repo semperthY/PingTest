@@ -7,7 +7,6 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import java.net.HttpURLConnection
-import java.net.InetAddress
 import java.net.URL
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -18,17 +17,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnTest: Button
     private lateinit var btnExit: Button
 
-    // Списки сайтов для проверки
+    // Зарубежные сайты (должны быть доступны без белых списков)
     private val foreignSites = listOf(
         "https://www.google.com/generate_204",
-        "https://www.youtube.com",
-        "https://www.facebook.com"
+        "https://vercel.com",
+        "https://github.com"
     )
     
+    // Российские сайты (должны быть доступны всегда)
     private val russianSites = listOf(
         "https://vk.com",
         "https://yandex.ru",
-        "https://mail.ru"
+        "https://habr.com"
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
