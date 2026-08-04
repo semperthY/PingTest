@@ -29,21 +29,24 @@ class MainActivity : AppCompatActivity() {
 
         btnTest.setOnClickListener {
             tvResult.text = "Проверка..."
-            tvStatus.text = "⏳ Загрузка..."
+            tvStatus.text = "Загрузка..."
             tvResult.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
             btnTest.isEnabled = false
             btnTest.alpha = 0.6f
 
-            // Используем пул потоков для параллельной проверки
             val executor = Executors.newFixedThreadPool(2)
             
-            val googleFuture = executor.submit { checkUrl("https://www.google.com/generate_204", 5000) }
-            val vkFuture = executor.submit { checkUrl("https://vk.com", 5000) }
+            val googleFuture = executor.submit { 
+                checkUrl("https://www.google.com/generate_204", 5000) 
+            }
+            val vkFuture = executor.submit { 
+                checkUrl("https://vk.com", 5000) 
+            }
             
             Thread {
                 try {
-                    val isGoogleUp = googleFuture.get(8, TimeUnit.SECONDS)
-                    val isVkUp = vkFuture.get(8, TimeUnit.SECONDS)
+                    val isGoogleUp: Boolean = googleFuture.get(8, TimeUnit.SECONDS) as Boolean
+                    val isVkUp: Boolean = vkFuture.get(8, TimeUnit.SECONDS) as Boolean
                     
                     Log.d("PingTest", "Google: $isGoogleUp, VK: $isVkUp")
                     
@@ -54,24 +57,24 @@ class MainActivity : AppCompatActivity() {
                         
                         when {
                             isGoogleUp && isVkUp -> {
-                                tvResult.text = "✅ Белые списки выкл."
+                                tvResult.text = "Белые списки выкл."
                                 tvResult.setTextColor(ContextCompat.getColor(this, R.color.success))
-                                tvStatus.text = " Все сайты доступны"
+                                tvStatus.text = "Все сайты доступны"
                             }
                             !isGoogleUp && isVkUp -> {
-                                tvResult.text = "🚫 Белые списки вкл."
+                                tvResult.text = "Белые списки вкл."
                                 tvResult.setTextColor(ContextCompat.getColor(this, R.color.error))
-                                tvStatus.text = "🔴 Google заблокирован"
+                                tvStatus.text = "Google заблокирован"
                             }
                             isGoogleUp && !isVkUp -> {
-                                tvResult.text = "❓ Необычная ситуация"
+                                tvResult.text = "Необычная ситуация"
                                 tvResult.setTextColor(ContextCompat.getColor(this, R.color.warning))
-                                tvStatus.text = "🟡 VK недоступен, Google работает"
+                                tvStatus.text = "VK недоступен, Google работает"
                             }
                             else -> {
-                                tvResult.text = "❌ Нет интернета"
+                                tvResult.text = "Нет интернета"
                                 tvResult.setTextColor(ContextCompat.getColor(this, R.color.warning))
-                                tvStatus.text = "⚠️ Оба сайта недоступны"
+                                tvStatus.text = "Оба сайта недоступны"
                             }
                         }
                     }
@@ -81,9 +84,9 @@ class MainActivity : AppCompatActivity() {
                         btnTest.isEnabled = true
                         btnTest.alpha = 1f
                         executor.shutdown()
-                        tvResult.text = "❌ Ошибка проверки"
+                        tvResult.text = "Ошибка проверки"
                         tvResult.setTextColor(ContextCompat.getColor(this, R.color.warning))
-                        tvStatus.text = "⏱️ Превышено время ожидания"
+                        tvStatus.text = "Превышено время ожидания"
                     }
                 }
             }.start()
@@ -105,7 +108,6 @@ class MainActivity : AppCompatActivity() {
             connection.instanceFollowRedirects = true
             connection.useCaches = false
             
-            // Принудительно устанавливаем соединение
             val code = connection.responseCode
             connection.disconnect()
             
