@@ -1,17 +1,16 @@
 package com.example.pingtest
 
-import android.animation.ObjectAnimator
 import android.os.Bundle
 import android.util.Log
-import android.view.View
-import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.Button
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
     private lateinit var tvResult: TextView
@@ -28,13 +27,6 @@ class MainActivity : AppCompatActivity() {
         btnTest = findViewById(R.id.btnTest)
         btnExit = findViewById(R.id.btnExit)
 
-        // Анимация появления
-        tvResult.alpha = 0f
-        tvResult.animate()
-            .alpha(1f)
-            .setDuration(1000)
-            .start()
-
         btnTest.setOnClickListener {
             tvResult.text = "Проверка..."
             tvStatus.text = "⏳ Загрузка..."
@@ -42,33 +34,56 @@ class MainActivity : AppCompatActivity() {
             btnTest.isEnabled = false
             btnTest.alpha = 0.6f
 
+            // Используем пул потоков для параллельной проверки
+            val executor = Executors.newFixedThreadPool(2)
+            
+            val googleFuture = executor.submit { checkUrl("https://www.google.com/generate_204", 5000) }
+            val vkFuture = executor.submit { checkUrl("https://vk.com", 5000) }
+            
             Thread {
-                val isGoogleUp = checkUrl("https://www.google.com/generate_204")
-                val isVkUp = checkUrl("https://vk.com")
-                Log.d("PingTest", "Google: $isGoogleUp, VK: $isVkUp")
-                
-                runOnUiThread {
-                    btnTest.isEnabled = true
-                    btnTest.alpha = 1f
+                try {
+                    val isGoogleUp = googleFuture.get(8, TimeUnit.SECONDS)
+                    val isVkUp = vkFuture.get(8, TimeUnit.SECONDS)
                     
-                    when {
-                        isGoogleUp && isVkUp -> {
-                            tvResult.text = "✅ Белые списки выкл."
-                            tvResult.setTextColor(ContextCompat.getColor(this, R.color.success))
-                            tvStatus.text = "🟢 Все сайты доступны"
-                            showSuccessAnimation()
+                    Log.d("PingTest", "Google: $isGoogleUp, VK: $isVkUp")
+                    
+                    runOnUiThread {
+                        btnTest.isEnabled = true
+                        btnTest.alpha = 1f
+                        executor.shutdown()
+                        
+                        when {
+                            isGoogleUp && isVkUp -> {
+                                tvResult.text = "✅ Белые списки выкл."
+                                tvResult.setTextColor(ContextCompat.getColor(this, R.color.success))
+                                tvStatus.text = " Все сайты доступны"
+                            }
+                            !isGoogleUp && isVkUp -> {
+                                tvResult.text = "🚫 Белые списки вкл."
+                                tvResult.setTextColor(ContextCompat.getColor(this, R.color.error))
+                                tvStatus.text = "🔴 Google заблокирован"
+                            }
+                            isGoogleUp && !isVkUp -> {
+                                tvResult.text = "❓ Необычная ситуация"
+                                tvResult.setTextColor(ContextCompat.getColor(this, R.color.warning))
+                                tvStatus.text = "🟡 VK недоступен, Google работает"
+                            }
+                            else -> {
+                                tvResult.text = "❌ Нет интернета"
+                                tvResult.setTextColor(ContextCompat.getColor(this, R.color.warning))
+                                tvStatus.text = "⚠️ Оба сайта недоступны"
+                            }
                         }
-                        !isGoogleUp && isVkUp -> {
-                            tvResult.text = "🚫 Белые списки вкл."
-                            tvResult.setTextColor(ContextCompat.getColor(this, R.color.error))
-                            tvStatus.text = "🔴 Google заблокирован"
-                            showErrorAnimation()
-                        }
-                        else -> {
-                            tvResult.text = "❌ Нет интернета"
-                            tvResult.setTextColor(ContextCompat.getColor(this, R.color.warning))
-                            tvStatus.text = "⚠️ Проверьте подключение"
-                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("PingTest", "Timeout or error: ${e.message}")
+                    runOnUiThread {
+                        btnTest.isEnabled = true
+                        btnTest.alpha = 1f
+                        executor.shutdown()
+                        tvResult.text = "❌ Ошибка проверки"
+                        tvResult.setTextColor(ContextCompat.getColor(this, R.color.warning))
+                        tvStatus.text = "⏱️ Превышено время ожидания"
                     }
                 }
             }.start()
@@ -79,33 +94,31 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showSuccessAnimation() {
-        val animator = ObjectAnimator.ofFloat(tvResult, "scaleX", 1f, 1.2f, 1f)
-        animator.duration = 500
-        animator.interpolator = AccelerateDecelerateInterpolator()
-        animator.start()
-    }
-
-    private fun showErrorAnimation() {
-        val animator = ObjectAnimator.ofFloat(tvResult, "translationX", 0f, -20f, 20f, -20f, 20f, 0f)
-        animator.duration = 500
-        animator.start()
-    }
-
-    private fun checkUrl(urlString: String): Boolean {
+    private fun checkUrl(urlString: String, timeout: Int): Boolean {
+        var connection: HttpURLConnection? = null
         return try {
             val url = URL(urlString)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = 10000
-            connection.readTimeout = 10000
-            connection.requestMethod = "GET"
+            connection = url.openConnection() as HttpURLConnection
+            connection.connectTimeout = timeout
+            connection.readTimeout = timeout
+            connection.requestMethod = "HEAD"
             connection.instanceFollowRedirects = true
+            connection.useCaches = false
+            
+            // Принудительно устанавливаем соединение
             val code = connection.responseCode
             connection.disconnect()
+            
+            Log.d("PingTest", "$urlString returned $code")
             code in 200..399
+        } catch (e: SocketTimeoutException) {
+            Log.e("PingTest", "Timeout for $urlString")
+            false
         } catch (e: Exception) {
             Log.e("PingTest", "Error checking $urlString: ${e.message}")
             false
+        } finally {
+            connection?.disconnect()
         }
     }
 }
