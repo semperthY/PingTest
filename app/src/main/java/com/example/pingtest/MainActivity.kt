@@ -1,12 +1,19 @@
 package com.example.pingtest
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.InetAddress
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -16,20 +23,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var btnTest: Button
     private lateinit var btnExit: Button
-
-    // Зарубежные сайты (должны быть доступны без белых списков)
-    private val foreignSites = listOf(
-        "https://www.google.com/generate_204",
-        "https://vercel.com",
-        "https://github.com"
-    )
-    
-    // Российские сайты (должны быть доступны всегда)
-    private val russianSites = listOf(
-        "https://vk.com",
-        "https://yandex.ru",
-        "https://habr.com"
-    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,43 +41,66 @@ class MainActivity : AppCompatActivity() {
             btnTest.alpha = 0.6f
 
             Thread {
+                // Сначала проверяем есть ли вообще интернет
+                val hasInternet = isInternetAvailable()
+                Log.d("PingTest", "Internet available: $hasInternet")
+                
+                if (!hasInternet) {
+                    runOnUiThread {
+                        btnTest.isEnabled = true
+                        btnTest.alpha = 1f
+                        tvResult.text = "Нет интернета"
+                        tvResult.setTextColor(ContextCompat.getColor(this, R.color.warning))
+                        tvStatus.text = "Проверьте подключение"
+                    }
+                    return@Thread
+                }
+
                 try {
                     // Проверяем зарубежные сайты
-                    val foreignAccessible = checkMultipleSites(foreignSites)
-                    // Проверяем российские сайты
-                    val russianAccessible = checkMultipleSites(russianSites)
+                    val googleOk = checkSingleSite("https://www.google.com/generate_204", 8000)
+                    val vercelOk = checkSingleSite("https://vercel.com", 8000)
+                    val githubOk = checkSingleSite("https://github.com", 8000)
                     
-                    Log.d("PingTest", "Foreign: $foreignAccessible, Russian: $russianAccessible")
+                    // Проверяем российские сайты
+                    val vkOk = checkSingleSite("https://vk.com", 8000)
+                    val yandexOk = checkSingleSite("https://yandex.ru", 8000)
+                    
+                    Log.d("PingTest", "Google: $googleOk, Vercel: $vercelOk, GitHub: $githubOk")
+                    Log.d("PingTest", "VK: $vkOk, Yandex: $yandexOk")
+                    
+                    val foreignOk = (if (googleOk) 1 else 0) + (if (vercelOk) 1 else 0) + (if (githubOk) 1 else 0)
+                    val russianOk = (if (vkOk) 1 else 0) + (if (yandexOk) 1 else 0)
                     
                     runOnUiThread {
                         btnTest.isEnabled = true
                         btnTest.alpha = 1f
                         
                         when {
-                            foreignAccessible && russianAccessible -> {
+                            foreignOk >= 2 && russianOk >= 1 -> {
                                 tvResult.text = "Белые списки выкл."
                                 tvResult.setTextColor(ContextCompat.getColor(this, R.color.success))
                                 tvStatus.text = "Все сайты доступны"
                             }
-                            !foreignAccessible && russianAccessible -> {
+                            foreignOk < 2 && russianOk >= 1 -> {
                                 tvResult.text = "Белые списки вкл."
                                 tvResult.setTextColor(ContextCompat.getColor(this, R.color.error))
                                 tvStatus.text = "Зарубежные сайты заблокированы"
                             }
-                            foreignAccessible && !russianAccessible -> {
+                            foreignOk >= 2 && russianOk < 1 -> {
                                 tvResult.text = "Необычная ситуация"
                                 tvResult.setTextColor(ContextCompat.getColor(this, R.color.warning))
                                 tvStatus.text = "Российские сайты недоступны"
                             }
                             else -> {
-                                tvResult.text = "Нет интернета"
+                                tvResult.text = "Ошибка сети"
                                 tvResult.setTextColor(ContextCompat.getColor(this, R.color.warning))
-                                tvStatus.text = "Все сайты недоступны"
+                                tvStatus.text = "Проблема с подключением"
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e("PingTest", "Error: ${e.message}")
+                    Log.e("PingTest", "Error: ${e.message}", e)
                     runOnUiThread {
                         btnTest.isEnabled = true
                         btnTest.alpha = 1f
@@ -101,46 +117,49 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun checkMultipleSites(sites: List<String>): Boolean {
-        val executor = Executors.newFixedThreadPool(3)
-        val futures = sites.map { site ->
-            executor.submit {
-                checkSite(site)
+    private fun isInternetAvailable(): Boolean {
+        return try {
+            val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val network = connectivityManager.activeNetwork ?: return false
+                val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            } else {
+                @Suppress("DEPRECATION")
+                connectivityManager.activeNetworkInfo?.isConnected == true
             }
+        } catch (e: Exception) {
+            Log.e("PingTest", "Network check error: ${e.message}")
+            false
         }
-        
-        var successCount = 0
-        for (future in futures) {
-            try {
-                val result = future.get(8, TimeUnit.SECONDS) as Boolean
-                if (result) successCount++
-            } catch (e: Exception) {
-                Log.e("PingTest", "Site check failed: ${e.message}")
-            }
-        }
-        executor.shutdown()
-        
-        // Если хотя бы 2 из 3 сайтов доступны - считаем что категория работает
-        return successCount >= 2
     }
 
-    private fun checkSite(urlString: String): Boolean {
+    private fun checkSingleSite(urlString: String, timeout: Int): Boolean {
         var connection: HttpURLConnection? = null
         return try {
             val url = URL(urlString)
             connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = 6000
-            connection.readTimeout = 6000
-            connection.requestMethod = "HEAD"
+            connection.connectTimeout = timeout
+            connection.readTimeout = timeout
+            connection.requestMethod = "GET"
             connection.instanceFollowRedirects = true
+            connection.useCaches = false
+            connection.connect()
             
             val code = connection.responseCode
             connection.disconnect()
             
             Log.d("PingTest", "$urlString -> $code")
             code in 200..399
+        } catch (e: SocketTimeoutException) {
+            Log.e("PingTest", "Timeout: $urlString")
+            false
+        } catch (e: IOException) {
+            Log.e("PingTest", "IO Error $urlString: ${e.message}")
+            false
         } catch (e: Exception) {
-            Log.e("PingTest", "Failed $urlString: ${e.message}")
+            Log.e("PingTest", "Error $urlString: ${e.message}")
             false
         } finally {
             connection?.disconnect()
